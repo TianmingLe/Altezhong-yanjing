@@ -1,0 +1,7 @@
+[submodule "omi"]
+	path = omi
+	url = https://github.com/BasedHardware/omi.git
+
+[submodule "flutter"]
+	path = flutter
+	url = https://github.com/flutter/flutter.git

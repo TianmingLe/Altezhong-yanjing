@@ -575,3 +575,62 @@ python -m pytest
   - 给出内存占用（编译产物 size + 运行时峰值）与功耗影响预估/测量方法
 - 协议必须二进制、版本化、可向后兼容（旧固件/旧 App 允许功能降级但不得崩溃）
 
+## 附录 A：执行约束与补充信息清单（评审确认）
+
+### A.1 g4 UI/UX 设计令牌（强制）
+
+- 配色
+  - 主 HUD：`#00E5FF`
+  - 告警/Alert：`#FF3D00`
+  - 背景遮罩：`#000000`，opacity `0.4`
+- 排版
+  - 系统默认无衬线字体
+  - HUD 文字：`14sp`，行高 `1.2`
+  - 最大宽度：`80vw`，超出省略号 `...`
+- 动效
+  - 入场：`SlideTransition`，Y 轴偏移 `0.1h`，时长 `100ms`
+  - 退场：`Opacity` 渐变，时长 `120ms`
+  - 总渲染链路需满足 Spec 8.2：`p95 ≤ 150ms`，动效不得阻塞主线程
+- 坐标原点
+  - `(0,0)` 对应相机预览左上角
+  - 必须适配 `BoxFit.cover` 的裁剪偏移，禁止硬编码屏幕宽高
+
+### A.2 无硬件模拟方案（调试必备）
+
+- 固件端 Mock（后续固件任务落地）
+  - 在 `omiGlass/firmware/src/app.cpp` 增加 `HUD_MOCK_MODE` 开关
+  - 启用后通过 FreeRTOS 定时器每 `2s` 调用 `send_hud_frame()` 发送循环测试帧（type=0/2/3 轮询，x/y 固定 `320/240`）
+- 手机端 Mock（g4 落地）
+  - `hud_protocol.dart` 暴露 `enableMockStream(bool)`，开启后跳过 BLE 注入模拟帧，便于 UI 独立调试
+- 验证命令
+  - `flutter run --debug` + 模拟器/真机，确认优先级覆盖与 3s 自动消退
+
+### A.3 Vision API 契约（Phase 4 前置定义）
+
+- 接口：`POST /v1/vision/frame`
+- 输入：`multipart/form-data`
+  - `image`: JPEG binary（VGA 640x480，quality=75）
+  - `metadata`: JSON string `{ "timestamp": 1713369600000, "battery": 85, "task_id": "uuid" }`
+- 输出（200 OK）
+
+```json
+{
+  "events": [
+    { "type": "person_detected", "confidence": 0.92, "bbox": [120, 80, 200, 300] }
+  ],
+  "processing_time_ms": 145,
+  "router_decision": "cloud"
+}
+```
+
+- 约束：后端需实现基础事件去重（5s 内同 bbox 合并），避免告警风暴
+
+### A.4 OTA 密钥管理与降级阈值（Phase 6/2 精确值）
+
+- 密钥工作流
+  - 开发环境：私钥 `keys/dev/ota_sign.pem`（`.gitignore` 排除），公钥 `keys/dev/ota_verify.pub` 硬编码进固件
+  - 签名脚本：`scripts/sign_ota.sh` 输出 `firmware.bin` + `firmware.sig`，CI 通过环境变量注入生产密钥
+- 降级阈值（policy_rules）
+  - 网络降级：BLE RTT `>200ms` 或丢包率 `>5%` 持续 `10s` → JPEG 降至 `1fps`，HUD 仅保留 `priority≥200`
+  - 离线 ASR 触发：连续 `3` 次 `/v4/listen` 超时（`>3s`）或 `privacy_mode=true` → 切换 `whisper.cpp` tiny
+  - 电量降级：`battery < 20%` → 关闭相机采集，仅保留音频流 + 心跳
