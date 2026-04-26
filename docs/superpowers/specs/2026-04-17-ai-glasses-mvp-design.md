@@ -218,7 +218,7 @@ Service：`OMI_SERVICE_UUID = 19B10000-E8F2-537E-4F6C-D104768A1214`
 | Characteristic | UUID | 方向 | 属性 | 说明 |
 |---|---|---|---|---|
 | Audio Data | `...0001...` | Glass → Phone | Notify | 音频流，3B header + codec payload |
-| Audio Codec | `...0002...` | Glass → Phone | Read | 1B codec id（21=Opus FS320）|
+| Audio Codec | `...0002...` | Glass → Phone | Read | 1B codec id（21=Opus FS320 V1，22=Opus FS320 V2(seq+timestamp)）|
 | Photo Data | `...0005...` | Glass → Phone | Notify/Read | JPEG 分片流 |
 | Photo Control | `...0006...` | Phone → Glass | Write | 触发拍照/控制（按现有实现）|
 
@@ -249,12 +249,15 @@ BLE 链路参数硬要求：
 #### 5.2.1 编码与采样
 
 - 采样：16kHz，单声道
-- 编码：Opus（codec id=21，frame=320 samples/20ms，参照 [config.h](file:///workspace/omi/omiGlass/firmware/src/config.h#L134-L147)）
+- 编码：Opus（frame=320 samples/20ms，参照 [config.h](file:///workspace/omi/omiGlass/firmware/src/config.h#L134-L147)）
+  - codec id=21：V1 包头（3B header）
+  - codec id=22：V2 包头（6B header：seq+采集时间戳）
 - 预处理：RNNoise（可开关，见第 6 章约束）
 
 #### 5.2.2 包格式
 
-每条 BLE 通知：`[packet_id_lo, packet_id_hi, sub_index] + encoded_payload`  
+V1（codec id=21）每条 BLE 通知：`[packet_id_lo, packet_id_hi, sub_index] + encoded_payload`  
+V2（codec id=22）每条 BLE 通知：`[seq(2B) + timestamp_ms(4B) + encoded_payload]`  
 手机端剥离 header（见 [ble_device_source.dart](file:///workspace/omi/app/lib/services/audio_sources/ble_device_source.dart#L4-L44)）。
 
 约束：
@@ -262,6 +265,9 @@ BLE 链路参数硬要求：
 - `AUDIO_PACKET_HEADER_SIZE = 3`
 - `sub_index` 用于一帧 Opus 被拆分多个 BLE 包时的顺序（固件按 MTU 分片）
 - 手机端以 header 作为 sync key，对丢包/乱序做容错（V1.0：不做重传，仅统计与告警）
+  - V2 的 `timestamp_ms` 必须来自采集时刻（在 `onMicData()` 采样点捕获并沿 pipeline 透传），禁止使用“发送时刻”或“编码完成时刻”
+  - V2 的 `seq` 为 uint16，回绕 65535→0；接收端丢包判断需处理回绕
+  - 固件侧拥塞节流：当滚动 1s 带宽窗口 `tx_bytes_1s*8 > 400kbps`，暂停 JPEG 分片发送，优先保障音频（埋点：`BLE_AUDIO_BW`）
 
 ### 5.3 AR/HUD 二进制帧协议（MVP：手机端渲染）
 
