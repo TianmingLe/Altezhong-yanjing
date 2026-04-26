@@ -73,3 +73,94 @@ def test_session_init_and_complete_returns_result():
         p.terminate()
         p.wait(timeout=5)
 
+
+def test_resume_with_missing_ranges():
+    port = 18767
+    p = _start_server(port)
+    try:
+        _wait_ready(p)
+        uri = f"ws://127.0.0.1:{port}"
+
+        resp = asyncio.run(_ws_roundtrip(uri, {"op": "session_init", "session_id": "s2", "frame_type": 2, "total_bytes": 20}))
+        assert resp["op"] == "session_ack"
+        assert resp["accepted"] is True
+
+        async def run_flow():
+            async with websockets.connect(uri) as ws:
+                a = b"\x11" * 5
+                b = b"\x22" * 5
+                await ws.send(json.dumps({"op": "chunk", "session_id": "s2", "offset": 0, "data": base64.b64encode(a).decode("ascii"), "crc32": _crc32_u32(a)}))
+                ack1 = json.loads(await ws.recv())
+                assert ack1["op"] == "chunk_ack"
+
+                await ws.send(json.dumps({"op": "chunk", "session_id": "s2", "offset": 10, "data": base64.b64encode(b).decode("ascii"), "crc32": _crc32_u32(b)}))
+                ack2 = json.loads(await ws.recv())
+                assert ack2["op"] == "chunk_ack"
+
+            async with websockets.connect(uri) as ws2:
+                await ws2.send(json.dumps({"op": "session_resume", "session_id": "s2", "last_ack_offset": 15}))
+                state = json.loads(await ws2.recv())
+                assert state["op"] == "session_state"
+                assert state["missing_ranges"] == [[5, 10], [15, 20]]
+
+        asyncio.run(run_flow())
+    finally:
+        p.terminate()
+        p.wait(timeout=5)
+
+
+def test_complete_with_gaps():
+    port = 18768
+    p = _start_server(port)
+    try:
+        _wait_ready(p)
+        uri = f"ws://127.0.0.1:{port}"
+
+        resp = asyncio.run(_ws_roundtrip(uri, {"op": "session_init", "session_id": "s3", "frame_type": 2, "total_bytes": 10}))
+        assert resp["accepted"] is True
+
+        async def run_flow():
+            async with websockets.connect(uri) as ws:
+                a = b"\x33" * 5
+                await ws.send(json.dumps({"op": "chunk", "session_id": "s3", "offset": 0, "data": base64.b64encode(a).decode("ascii"), "crc32": _crc32_u32(a)}))
+                ack = json.loads(await ws.recv())
+                assert ack["op"] == "chunk_ack"
+
+                await ws.send(json.dumps({"op": "session_complete", "session_id": "s3", "sha256": "0" * 64}))
+                out = json.loads(await ws.recv())
+                assert out["op"] == "session_state"
+                assert out["missing_ranges"] == [[5, 10]]
+
+        asyncio.run(run_flow())
+    finally:
+        p.terminate()
+        p.wait(timeout=5)
+
+
+def test_resume_offset_out_of_range():
+    port = 18769
+    p = _start_server(port)
+    try:
+        _wait_ready(p)
+        uri = f"ws://127.0.0.1:{port}"
+
+        resp = asyncio.run(_ws_roundtrip(uri, {"op": "session_init", "session_id": "s4", "frame_type": 2, "total_bytes": 20}))
+        assert resp["accepted"] is True
+
+        async def run_flow():
+            async with websockets.connect(uri) as ws:
+                a = b"\x44" * 5
+                await ws.send(json.dumps({"op": "chunk", "session_id": "s4", "offset": 0, "data": base64.b64encode(a).decode("ascii"), "crc32": _crc32_u32(a)}))
+                ack = json.loads(await ws.recv())
+                assert ack["op"] == "chunk_ack"
+
+            async with websockets.connect(uri) as ws2:
+                await ws2.send(json.dumps({"op": "session_resume", "session_id": "s4", "last_ack_offset": 100}))
+                out = json.loads(await ws2.recv())
+                assert out["op"] == "error"
+                assert out["code"] == 1003
+
+        asyncio.run(run_flow())
+    finally:
+        p.terminate()
+        p.wait(timeout=5)

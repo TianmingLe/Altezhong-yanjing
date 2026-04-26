@@ -22,7 +22,7 @@ class SessionState:
         self.frame_type = frame_type
         self.total_bytes = total_bytes
         self.buf = bytearray(total_bytes)
-        self.received = bytearray(total_bytes)
+        self.received_ranges = []
         self.last_activity_ts = time.time()
 
     def note_activity(self) -> None:
@@ -33,25 +33,56 @@ class SessionState:
         if offset < 0 or end > self.total_bytes:
             raise ValueError("offset_out_of_range")
         self.buf[offset:end] = data
-        self.received[offset:end] = b"\x01" * len(data)
+        self._add_received_range(offset, end)
         self.note_activity()
         return end
 
+    def _add_received_range(self, start: int, end: int) -> None:
+        if start >= end:
+            return
+        ranges = self.received_ranges
+        ranges.append([start, end])
+        ranges.sort(key=lambda r: r[0])
+        merged = []
+        for s, e in ranges:
+            if not merged:
+                merged.append([s, e])
+                continue
+            ps, pe = merged[-1]
+            if s <= pe:
+                if e > pe:
+                    merged[-1][1] = e
+            else:
+                merged.append([s, e])
+        self.received_ranges = merged
+
+    def received_bytes(self) -> int:
+        n = 0
+        for s, e in self.received_ranges:
+            n += e - s
+        return n
+
+    def max_received_end(self) -> int:
+        if not self.received_ranges:
+            return 0
+        return self.received_ranges[-1][1]
+
     def is_complete(self) -> bool:
-        return all(b != 0 for b in self.received)
+        return len(self.received_ranges) == 1 and self.received_ranges[0][0] == 0 and self.received_ranges[0][1] == self.total_bytes
 
     def missing_ranges(self):
-        ranges = []
-        i = 0
-        while i < self.total_bytes:
-            if self.received[i] != 0:
-                i += 1
-                continue
-            start = i
-            while i < self.total_bytes and self.received[i] == 0:
-                i += 1
-            ranges.append([start, i])
-        return ranges
+        if not self.received_ranges:
+            return [[0, self.total_bytes]]
+        missing = []
+        cur = 0
+        for s, e in self.received_ranges:
+            if s > cur:
+                missing.append([cur, s])
+            if e > cur:
+                cur = e
+        if cur < self.total_bytes:
+            missing.append([cur, self.total_bytes])
+        return missing
 
 
 async def _send(ws, obj):
@@ -87,7 +118,7 @@ async def _handle_message(ws, sessions, msg):
             return
         want_crc = int(msg.get("crc32"))
         if _crc32_u32(raw) != want_crc:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1003})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": 1004})
             return
         try:
             next_offset = s.write_chunk(offset, raw)
@@ -103,10 +134,18 @@ async def _handle_message(ws, sessions, msg):
         if s is None:
             await _send(ws, {"op": "error", "session_id": session_id, "code": 1000})
             return
+        try:
+            last_ack_offset = int(msg.get("last_ack_offset"))
+        except Exception:
+            await _send(ws, {"op": "error", "session_id": session_id, "code": 1003})
+            return
+        if last_ack_offset < 0 or last_ack_offset > s.total_bytes or last_ack_offset > s.max_received_end():
+            await _send(ws, {"op": "error", "session_id": session_id, "code": 1003})
+            return
         s.note_activity()
         await _send(
             ws,
-            {"op": "session_state", "session_id": session_id, "received_bytes": s.total_bytes - sum(1 for b in s.received if b == 0), "missing_ranges": s.missing_ranges()},
+            {"op": "session_state", "session_id": session_id, "received_bytes": s.received_bytes(), "missing_ranges": s.missing_ranges()},
         )
         return
 
@@ -118,7 +157,7 @@ async def _handle_message(ws, sessions, msg):
             return
         s.note_activity()
         if not s.is_complete():
-            await _send(ws, {"op": "session_state", "session_id": session_id, "received_bytes": s.total_bytes - sum(1 for b in s.received if b == 0), "missing_ranges": s.missing_ranges()})
+            await _send(ws, {"op": "session_state", "session_id": session_id, "received_bytes": s.received_bytes(), "missing_ranges": s.missing_ranges()})
             return
         await _send(ws, {"op": "result", "session_id": session_id, "result_type": "mock", "payload": {"similarity": 0.92}})
         return
@@ -168,4 +207,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
