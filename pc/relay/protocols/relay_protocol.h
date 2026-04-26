@@ -8,11 +8,24 @@ static constexpr uint8_t RELAY_FRAME_TYPE_FEATURE_VECTOR = 0x02;
 static constexpr uint8_t RELAY_CODEC_ID_AUDIO_V2 = 22;
 static constexpr uint8_t RELAY_CODEC_ID_FEATURE = 33;
 
+typedef enum {
+    RELAY_OK = 0,
+    RELAY_ERR_OFFSET_OUT_OF_RANGE = 1001,
+    RELAY_ERR_CRC_MISMATCH = 1002,
+    RELAY_ERR_INVALID_OFFSET = 1003,
+    RELAY_ERR_SESSION_NOT_FOUND = 1004,
+    RELAY_ERR_BAD_BASE64 = 1005,
+    RELAY_ERR_BAD_JSON = 1006,
+    RELAY_ERR_BAD_OP = 1007
+} RelayErrorCode;
+
 static constexpr int RELAY_FRAME_HEADER_SIZE = 12;
 
 struct RelayFrameHeader {
     uint8_t frame_type;
     uint8_t codec_id;
+    // seq_le: uint16 little-endian, wraps 65535 → 0.
+    // Receiver MUST handle wrap: if (curr==0 && last==65535) not lost; else if ((curr-last)>1) lost.
     uint16_t seq_le;
     uint32_t timestamp_ms_le;
     uint32_t payload_len_le;

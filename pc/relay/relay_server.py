@@ -7,6 +7,8 @@ import zlib
 
 import websockets
 
+from protocols.relay_error_codes import RelayErrorCode
+
 
 IDLE_TIMEOUT_SEC = 600
 CLEANUP_INTERVAL_SEC = 60
@@ -107,23 +109,23 @@ async def _handle_message(ws, sessions, msg):
         session_id = msg.get("session_id")
         s = sessions.get(session_id)
         if s is None:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1000})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_SESSION_NOT_FOUND})
             return
         try:
             offset = int(msg.get("offset"))
             data_b64 = msg.get("data", "")
             raw = base64.b64decode(data_b64, validate=True)
         except Exception:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1002})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_BAD_BASE64})
             return
         want_crc = int(msg.get("crc32"))
         if _crc32_u32(raw) != want_crc:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1004})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_CRC_MISMATCH})
             return
         try:
             next_offset = s.write_chunk(offset, raw)
         except Exception:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1001})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_OFFSET_OUT_OF_RANGE})
             return
         await _send(ws, {"op": "chunk_ack", "session_id": session_id, "offset": offset, "next_offset": next_offset})
         return
@@ -132,15 +134,15 @@ async def _handle_message(ws, sessions, msg):
         session_id = msg.get("session_id")
         s = sessions.get(session_id)
         if s is None:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1000})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_SESSION_NOT_FOUND})
             return
         try:
             last_ack_offset = int(msg.get("last_ack_offset"))
         except Exception:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1003})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_INVALID_OFFSET})
             return
         if last_ack_offset < 0 or last_ack_offset > s.total_bytes or last_ack_offset > s.max_received_end():
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1003})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_INVALID_OFFSET})
             return
         s.note_activity()
         await _send(
@@ -153,7 +155,7 @@ async def _handle_message(ws, sessions, msg):
         session_id = msg.get("session_id")
         s = sessions.get(session_id)
         if s is None:
-            await _send(ws, {"op": "error", "session_id": session_id, "code": 1000})
+            await _send(ws, {"op": "error", "session_id": session_id, "code": RelayErrorCode.RELAY_ERR_SESSION_NOT_FOUND})
             return
         s.note_activity()
         if not s.is_complete():
@@ -162,7 +164,7 @@ async def _handle_message(ws, sessions, msg):
         await _send(ws, {"op": "result", "session_id": session_id, "result_type": "mock", "payload": {"similarity": 0.92}})
         return
 
-    await _send(ws, {"op": "error", "code": 1004})
+    await _send(ws, {"op": "error", "code": RelayErrorCode.RELAY_ERR_BAD_OP})
 
 
 async def _cleanup_loop(sessions):
@@ -186,7 +188,7 @@ async def serve(host: str, port: int, demo: bool):
             try:
                 msg = json.loads(raw)
             except Exception:
-                await _send(ws, {"op": "error", "code": 1005})
+                await _send(ws, {"op": "error", "code": RelayErrorCode.RELAY_ERR_BAD_JSON})
                 continue
             await _handle_message(ws, sessions, msg)
 
