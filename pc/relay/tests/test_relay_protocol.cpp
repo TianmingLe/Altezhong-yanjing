@@ -9,9 +9,9 @@ static void test_header_endianness()
     RelayFrameHeader h{};
     h.frame_type = RELAY_FRAME_TYPE_FEATURE_VECTOR;
     h.codec_id = RELAY_CODEC_ID_FEATURE;
-    h.seq = 0x0201;
-    h.timestamp_ms = 0x08070605;
-    h.payload_len = 0x0d0c0b0a;
+    h.seq_le = 0x0201;
+    h.timestamp_ms_le = 0x08070605;
+    h.payload_len_le = 0x0d0c0b0a;
 
     relay_frame_header_write(buf, h);
 
@@ -32,9 +32,9 @@ static void test_header_endianness()
     relay_frame_header_read(buf, &out);
     assert(out.frame_type == h.frame_type);
     assert(out.codec_id == h.codec_id);
-    assert(out.seq == h.seq);
-    assert(out.timestamp_ms == h.timestamp_ms);
-    assert(out.payload_len == h.payload_len);
+    assert(out.seq_le == h.seq_le);
+    assert(out.timestamp_ms_le == h.timestamp_ms_le);
+    assert(out.payload_len_le == h.payload_len_le);
 }
 
 int main()
@@ -42,4 +42,3 @@ int main()
     test_header_endianness();
     return 0;
 }
-

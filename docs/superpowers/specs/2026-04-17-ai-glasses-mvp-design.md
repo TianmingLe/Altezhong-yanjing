@@ -65,7 +65,9 @@ Plan 基准：AI 眼镜 MVP 行动计划方案（飞书）
   - alert：告警规则、推送到 App（WS/FCM）
 
 - PC/Windows（可插拔）
-  - relay：实现 `relay_interface.h` 规定的“帧转发/推理回传”最小能力
+  - `pc/relay/`：实现 `relay_interface.h` 规定的“帧转发/推理回传”最小能力
+    - 协议：WebSocket + JSON 控制帧 + Base64 数据块（MVP 仅支持 feature_vector）
+    - 断点续传：`session_init/chunk/session_resume/session_complete` + `missing_ranges`（半开区间 `[start,end)`）
 
 ### 3.2 依赖关系图（Mermaid）
 
@@ -319,6 +321,15 @@ Glass `HUD Frame Out (BLE)` → Phone → `HUD WebSocket` → Phone HUD Renderer
   - `features`：128×int8（量化后特征向量）
 - Feature Quant Read Payload（固定 6B）：
   - `[scale(4B float32 little-endian) + zero_point(1B int8) + model_id(1B uint8)]`
+
+#### 5.3.4 PC Relay Frame Header（跨链路复用）
+
+- PC Relay 传输层：WebSocket + JSON 控制帧 + Base64 数据块（见 `pc/relay/`）
+- RelayFrameHeader（用于在 “Phone → PC Relay” 场景复用 `FEATURE_CODEC_ID=33` 的语义）：
+  - `frame_type`：`0x02` 表示 feature_vector（MVP）
+  - `codec_id`：`33`（与固件 `FEATURE_CODEC_ID=33` 对齐）
+  - `seq_le/timestamp_ms_le`：与 BLE Feature Header 相同语义，小端，`seq` 回绕 65535→0
+  - `payload_len_le`：payload 字节数（feature-only 为 128）
 
 ### 5.4 OTA 协议与回滚（统一接口 + ESP32 等价实现）
 
