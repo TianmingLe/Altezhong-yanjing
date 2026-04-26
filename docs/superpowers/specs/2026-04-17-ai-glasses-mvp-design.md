@@ -309,6 +309,17 @@ N = text_len，且 total_len = 7 + N ≤ 64
 
 Glass `HUD Frame Out (BLE)` → Phone → `HUD WebSocket` → Phone HUD Renderer（叠加到相机预览 / 信息面板）→ 必要时 TTS 播报
 
+#### 5.3.3 Vision Feature Notify（codec id=33）
+
+- `FEATURE_CODEC_ID=33`：表示“视觉特征向量”数据流（int8 embedding），用于手机端/云端做相似度、检索或事件检测
+- Feature Notify Payload（每条 BLE 通知固定 134B）：
+  - `[seq(2B) + timestamp_ms(4B) + features(128B)]`
+  - `seq`：uint16，小端，回绕 65535→0
+  - `timestamp_ms`：uint32，小端；MVP 阶段可先用 `millis()`，后续替换为相机帧捕获时间戳
+  - `features`：128×int8（量化后特征向量）
+- Feature Quant Read Payload（固定 6B）：
+  - `[scale(4B float32 little-endian) + zero_point(1B int8) + model_id(1B uint8)]`
+
 ### 5.4 OTA 协议与回滚（统一接口 + ESP32 等价实现）
 
 #### 5.4.1 BLE 下发 Wi‑Fi + URL（兼容 OmiGlass）
