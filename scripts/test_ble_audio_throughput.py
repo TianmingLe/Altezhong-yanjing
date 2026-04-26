@@ -25,17 +25,20 @@ def simulate(frames: int, frame_ms: int, loss_rate: float, bitrate: int, payload
     payload_bytes = int(round((bitrate / 8.0) * (frame_ms / 1000.0)))
     payload_bytes = min(payload_bytes, payload_max)
 
+    drops = int(frames * loss_rate)
+    drop_indices = set(rng.sample(range(frames), drops)) if drops > 0 else set()
+
     generated = []
     seq = 0
     ts_ms = 0
-    for _ in range(frames):
+    for idx in range(frames):
         generated.append((seq, ts_ms, payload_bytes))
         seq = (seq + 1) & 0xFFFF
         ts_ms += frame_ms
 
     received = []
-    for pkt in generated:
-        if rng.random() < loss_rate:
+    for idx, pkt in enumerate(generated):
+        if idx in drop_indices:
             continue
         received.append(pkt)
 
@@ -120,4 +123,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
