@@ -37,12 +37,6 @@ class PcmRingBuffer {
   Int16List snapshot() {
     if (_filled == 0) return Int16List(0);
     if (_filled < capacitySamples) return Int16List.fromList(_buf.sublist(0, _filled));
-
-    final out = Int16List(capacitySamples);
-    final tailLen = capacitySamples - _write;
-    out.setAll(0, _buf.sublist(_write));
-    out.setAll(tailLen, _buf.sublist(0, _write));
-    return out;
+    return Int16List.fromList(_buf);
   }
 }
-

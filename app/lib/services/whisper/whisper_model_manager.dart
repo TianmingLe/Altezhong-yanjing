@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -98,4 +97,3 @@ class WhisperModelManager implements WhisperModelManagerApi {
 abstract class WhisperModelManagerApi {
   Future<String> ensureModel();
 }
-

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omi_app/services/whisper/whisper_model_manager.dart';
 import 'package:omi_app/services/whisper/whisper_service.dart';
 
 class FakeWorker implements WhisperWorkerApi {
