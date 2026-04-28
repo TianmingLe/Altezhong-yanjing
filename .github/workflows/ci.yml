@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  relay-and-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Lint (py_compile)
+        run: |
+          python -m py_compile scripts/run_demo_servers.py
+          python -m py_compile scripts/test_feature_similarity.py
+
+      - name: Install relay deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r pc/relay/requirements.txt
+
+      - name: Relay tests
+        run: |
+          cd pc/relay
+          python -m pytest tests/ -v
+
