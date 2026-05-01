@@ -1,0 +1,8 @@
+# Each ignore entry MUST be preceded by:
+# reason: <why this risk is accepted and what mitigations exist>
+# expires: YYYY-MM-DD
+#
+# Example:
+# reason: false positive for example package
+# expires: 2026-06-01
+# CVE-2026-0000

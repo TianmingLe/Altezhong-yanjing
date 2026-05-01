@@ -1,36 +1,132 @@
-name: CI
+name: Product CI
 
 on:
   push:
     branches: ["main"]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  relay-and-scripts:
+  static-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Lint (py_compile)
+      - name: Install clang-tidy
         run: |
-          python -m py_compile scripts/run_demo_servers.py
-          python -m py_compile scripts/test_feature_similarity.py
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy
 
-      - name: Install relay deps
+      - name: Static checks (Makefile)
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r pc/relay/requirements.txt
+          mkdir -p ci-output
+          make py-compile 2>&1 | tee ci-output/static-check.log
+          make relay-pytest 2>&1 | tee -a ci-output/static-check.log
 
-      - name: Relay tests
+      - name: clang-tidy (pc/relay)
         run: |
-          cd pc/relay
-          python -m pytest tests/ -v
+          clang-tidy pc/relay/tests/test_relay_protocol.cpp -- \
+            -std=c++17 -I.
 
+      - name: Validate .trivyignore format
+        run: python scripts/ci/validate_trivyignore.py .trivyignore
+
+      - name: Upload ci-output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-output-static-check
+          path: ci-output/
+
+  e2e-demo:
+    needs: static-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: altezhong_demo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Run demo-test
+        run: make demo-test
+
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p ci-output
+          make demo-logs > ci-output/demo-logs.txt || true
+          docker compose -f docker/docker-compose.yml --profile demo ps > ci-output/compose-ps.txt || true
+          if [ "${{ job.status }}" != "success" ]; then
+            docker compose -f docker/docker-compose.yml --profile demo config > ci-output/compose-config.yaml || true
+          fi
+          make demo-clean || true
+
+      - name: Upload ci-output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-output-e2e-demo
+          path: ci-output/
+
+  image-scan:
+    needs: e2e-demo
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: altezhong_demo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Trivy (filesystem)
+        run: |
+          set -euo pipefail
+          mkdir -p ci-output
+          docker run --rm \
+            -v "$PWD:/work" \
+            -v "$HOME/.cache/trivy:/root/.cache" \
+            -w /work \
+            aquasec/trivy:0.52.2 \
+            fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --ignorefile .trivyignore \
+            docker pc scripts tests | tee ci-output/trivy-fs.txt
+
+      - name: Build demo images
+        run: docker compose -f docker/docker-compose.yml --profile demo build
+
+      - name: Trivy (images)
+        run: |
+          set -euo pipefail
+          mkdir -p ci-output
+          images="$(docker compose -f docker/docker-compose.yml --profile demo config --images | sort -u)"
+          for img in $images; do
+            echo "Scanning image: $img"
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$HOME/.cache/trivy:/root/.cache" \
+              -v "$PWD:/work" \
+              -w /work \
+              aquasec/trivy:0.52.2 \
+              image --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --ignorefile .trivyignore \
+              --skip-dirs /usr/lib,/usr/share \
+              "$img" | tee -a ci-output/trivy-images.txt
+          done
+
+      - name: Upload ci-output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-output-image-scan
+          path: ci-output/

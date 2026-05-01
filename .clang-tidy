@@ -1,0 +1,4 @@
+Checks: '-*,bugprone-*,readability-*,clang-analyzer-*'
+WarningsAsErrors: ''
+HeaderFilterRegex: 'pc/relay/.*'
+FormatStyle: none

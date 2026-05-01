@@ -1,0 +1,104 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+    profiles: ["demo", "omi-backend"]
+
+  firestore-emulator:
+    build:
+      context: .
+      dockerfile: docker/firestore/Dockerfile
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+    profiles: ["demo", "omi-backend"]
+
+  pc-relay:
+    build:
+      context: .
+      dockerfile: docker/relay/Dockerfile
+    ports:
+      - "8766:8766"
+    profiles: ["demo", "omi-backend"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    environment:
+      OMI_DEMO: "1"
+      FIRESTORE_EMULATOR_HOST: "firestore-emulator:8080"
+      FIRESTORE_PROJECT_ID: "demo-project"
+      REDIS_URL: "redis://redis:6379/0"
+      PC_RELAY_URL: "ws://pc-relay:8766"
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      firestore-emulator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; json.load(urllib.request.urlopen('http://localhost:8000/healthz', timeout=1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    profiles: ["demo", "omi-backend"]
+
+  ble-gateway:
+    build:
+      context: .
+      dockerfile: docker/ble-gateway/Dockerfile
+    environment:
+      BACKEND_BASE_URL: "http://backend:8000"
+      GATEWAY_HOST: "0.0.0.0"
+      GATEWAY_PORT: "8787"
+      GATEWAY_QUEUE_MAX_ITEMS: "500"
+      GATEWAY_QUEUE_MAX_BYTES: "2097152"
+      GATEWAY_DRAIN_TIMEOUT_SEC: "5"
+    ports:
+      - "8787:8787"
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles: ["demo", "omi-backend"]
+
+  tester:
+    build:
+      context: .
+      dockerfile: docker/tester/Dockerfile
+    environment:
+      COMPOSE_MODE: "1"
+      BACKEND_BASE_URL: "http://backend:8000"
+      GATEWAY_WS: "ws://ble-gateway:8787"
+      REDIS_URL: "redis://redis:6379/0"
+    depends_on:
+      redis:
+        condition: service_healthy
+      firestore-emulator:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      ble-gateway:
+        condition: service_started
+      pc-relay:
+        condition: service_started
+    profiles: ["demo"]
+
+  netem:
+    image: alpine:3.20
+    command: ["sh", "-c", "apk add --no-cache iproute2 iptables && tail -f /dev/null"]
+    cap_add:
+      - NET_ADMIN
+    profiles: ["chaos"]
